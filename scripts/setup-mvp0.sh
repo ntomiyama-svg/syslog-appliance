@@ -23,7 +23,8 @@
 #    13. rsyslog 統計設定の配置（11-syslog-appliance-stats.conf）
 #    14. rsyslog 再起動（全設定ファイル配置完了後）
 #    15. apply-appliance-conf.sh のシステム配置
-#    16. 最終確認情報表示
+#    16. rsyslog 自動回復 drop-in の配置（restart.conf）
+#    17. 最終確認情報表示
 #
 # 実行例:
 #   sudo ./scripts/setup-mvp0.sh
@@ -68,6 +69,11 @@ NOTIFICATION_DIR="/var/lib/syslog-appliance/notifications"
 # 受信元制限スクリプト関連パス（T2）
 APPLY_CONF_SCRIPT_SRC="${REPO_ROOT}/scripts/apply-appliance-conf.sh"
 APPLY_CONF_SCRIPT_DEST="/opt/syslog-appliance/scripts/apply-appliance-conf.sh"
+
+# rsyslog 自動回復 drop-in 関連パス（T8）
+RSYSLOG_RESTART_CONF_SRC="${REPO_ROOT}/systemd/rsyslog-restart.conf"
+RSYSLOG_RESTART_DROPIN_DIR="/etc/systemd/system/rsyslog.service.d"
+RSYSLOG_RESTART_CONF_DEST="${RSYSLOG_RESTART_DROPIN_DIR}/restart.conf"
 
 SYSLOG_PORT="514"
 SYSLOG_PROTO_UDP="udp"
@@ -616,7 +622,45 @@ else
 fi
 
 # =============================================================================
-# ステップ 16: 最終確認情報の表示
+# ステップ 16: rsyslog 自動回復 drop-in の配置
+# =============================================================================
+# rsyslog が異常終了した場合に systemd が自動再起動するための drop-in を配置する（T8）。
+# drop-in は rsyslog.service のユニット挙動を上書きするものであり、
+# rsyslog 本体の設定ファイルとは独立して管理できる。
+log_info "[Step 16] rsyslog 自動回復 drop-in を配置..."
+
+if [[ ! -f "${RSYSLOG_RESTART_CONF_SRC}" ]]; then
+    log_warn "rsyslog-restart.conf が見つかりません: ${RSYSLOG_RESTART_CONF_SRC}"
+    log_warn "rsyslog 自動回復機能はスキップします。"
+else
+    # drop-in ディレクトリを作成（存在しない場合のみ）
+    run_cmd mkdir -p "${RSYSLOG_RESTART_DROPIN_DIR}"
+    run_cmd chown root:root "${RSYSLOG_RESTART_DROPIN_DIR}"
+    run_cmd chmod 0755 "${RSYSLOG_RESTART_DROPIN_DIR}"
+
+    # 既存ファイルがあればバックアップ
+    if [[ -f "${RSYSLOG_RESTART_CONF_DEST}" ]]; then
+        TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+        RESTART_CONF_BACKUP="${BACKUP_DIR}/rsyslog-restart.conf.${TIMESTAMP}"
+        run_cmd cp "${RSYSLOG_RESTART_CONF_DEST}" "${RESTART_CONF_BACKUP}"
+        log_ok "既存ファイルをバックアップ: ${RESTART_CONF_BACKUP}"
+    fi
+
+    # drop-in ファイルを配置（権限: 0644）
+    run_cmd cp "${RSYSLOG_RESTART_CONF_SRC}" "${RSYSLOG_RESTART_CONF_DEST}"
+    run_cmd chown root:root "${RSYSLOG_RESTART_CONF_DEST}"
+    run_cmd chmod 0644 "${RSYSLOG_RESTART_CONF_DEST}"
+    log_ok "drop-in ファイルを配置: ${RSYSLOG_RESTART_CONF_DEST}"
+
+    # daemon-reload で systemd にユニット変更を認識させる
+    run_cmd systemctl daemon-reload
+    log_ok "systemctl daemon-reload を実行しました。"
+    log_info "rsyslog が異常終了した場合、5 秒後に自動再起動します。"
+    log_info "動作確認: sudo systemctl show rsyslog | grep -E 'Restart=|RestartUSec=|StartLimit'"
+fi
+
+# =============================================================================
+# ステップ 17: 最終確認情報の表示
 # =============================================================================
 echo ""
 log_info "=========================================="

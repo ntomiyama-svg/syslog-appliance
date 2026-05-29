@@ -40,6 +40,9 @@ BACKUP_DIR="/var/log/syslog-appliance/.backup"
 DISK_CHECK_SCRIPT_DEST="/opt/syslog-appliance/scripts/check-disk-usage.sh"
 # 受信元制限スクリプト関連パス（T2）
 APPLY_CONF_SCRIPT_DEST="/opt/syslog-appliance/scripts/apply-appliance-conf.sh"
+# rsyslog 自動回復 drop-in 関連パス（T8）
+RSYSLOG_RESTART_DROPIN_DIR="/etc/systemd/system/rsyslog.service.d"
+RSYSLOG_RESTART_CONF_DEST="${RSYSLOG_RESTART_DROPIN_DIR}/restart.conf"
 DISK_CHECK_SERVICE_DEST="/etc/systemd/system/syslog-appliance-disk-check.service"
 DISK_CHECK_TIMER_DEST="/etc/systemd/system/syslog-appliance-disk-check.timer"
 DISK_CHECK_TIMER_NAME="syslog-appliance-disk-check.timer"
@@ -249,6 +252,31 @@ if [[ -f "${APPLY_CONF_SCRIPT_DEST}" ]]; then
 else
     log_info "ファイルが見つかりません: ${APPLY_CONF_SCRIPT_DEST}（スキップ）"
 fi
+
+# rsyslog 自動回復 drop-in（restart.conf）の移動
+if [[ -f "${RSYSLOG_RESTART_CONF_DEST}" ]]; then
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    REMOVED_FILE="${BACKUP_DIR}/rsyslog-restart.conf.removed.${TIMESTAMP}"
+    run_cmd mv "${RSYSLOG_RESTART_CONF_DEST}" "${REMOVED_FILE}"
+    log_ok "rsyslog-restart.conf を移動: ${RSYSLOG_RESTART_CONF_DEST} -> ${REMOVED_FILE}"
+
+    # 親ディレクトリが空になった場合のみ削除する
+    if [[ "${DRY_RUN}" == false ]]; then
+        if [[ -d "${RSYSLOG_RESTART_DROPIN_DIR}" ]] && \
+           [[ -z "$(ls -A "${RSYSLOG_RESTART_DROPIN_DIR}" 2>/dev/null)" ]]; then
+            rmdir "${RSYSLOG_RESTART_DROPIN_DIR}"
+            log_ok "空になったディレクトリを削除: ${RSYSLOG_RESTART_DROPIN_DIR}"
+        fi
+    else
+        echo -e "${C_WARN}[DRY-RUN]${C_RESET} rmdir ${RSYSLOG_RESTART_DROPIN_DIR} （空の場合のみ）"
+    fi
+else
+    log_info "ファイルが見つかりません: ${RSYSLOG_RESTART_CONF_DEST}（スキップ）"
+fi
+
+# drop-in を削除したので daemon-reload で systemd に変更を認識させる
+run_cmd systemctl daemon-reload
+log_ok "systemctl daemon-reload を実行しました（drop-in 削除反映）。"
 
 # =============================================================================
 # ステップ 3: logrotate 設定ファイルの削除（バックアップとして移動）

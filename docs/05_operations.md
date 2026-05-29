@@ -140,6 +140,31 @@ sudo tail -f /var/log/syslog-appliance/stats/rsyslog-stats.log
 
 ---
 
+## rsyslog の自動回復（systemd 標準機能）
+
+### 仕組み
+
+- drop-in 設定: `/etc/systemd/system/rsyslog.service.d/restart.conf`
+- rsyslog が異常終了した場合、systemd により 5 秒後に自動再起動
+- 60 秒以内に 5 回失敗したらそれ以上の再起動を諦める（根本対応を促す）
+- 自動配置: `setup-mvp0.sh` の Step 16 で行われます
+
+### 動作確認
+
+```bash
+sudo systemctl show rsyslog | grep -E 'Restart=|RestartUSec=|StartLimit'
+```
+
+### 想定動作のテスト（注意：rsyslog を意図的に殺します）
+
+```bash
+sudo systemctl kill -s SIGKILL rsyslog
+sleep 6
+systemctl is-active rsyslog  # 自動再起動されて active になっているはず
+```
+
+---
+
 ## journald のディスク使用制限
 
 ### 現在の設定
