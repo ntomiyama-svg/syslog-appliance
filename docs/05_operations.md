@@ -1,5 +1,17 @@
 # syslog-appliance 運用手順
 
+## Web UI アクセス（MVP 1.1 以降）
+
+MVP 1.1 から nginx + HTTPS 構成に変更された。ブラウザでの管理画面アクセスは以下の通り。
+
+- **URL**: `https://10.18.115.29/`（HTTP へのアクセスは自動的に HTTPS にリダイレクト）
+- **認証**: ブラウザの Basic 認証ダイアログ（`/etc/syslog-appliance/backend.env` の `AUTH_USER` / `AUTH_PASS`）
+- **証明書**: 自己署名証明書（ブラウザの警告は「詳細設定」→「接続を続ける」で許可）
+- **API 直接アクセス**: `http://10.18.115.29:8080/` は廃止（FastAPI は 127.0.0.1 のみ）
+- **詳細**: `docs/12_mvp1_frontend.md` を参照
+
+---
+
 ## ログローテーション
 
 ### 設定
