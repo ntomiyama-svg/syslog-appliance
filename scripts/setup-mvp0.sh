@@ -18,7 +18,9 @@
 #     9. rsyslog 構文チェック
 #    10. firewalld へのポート許可追加
 #    11. rsyslog 再起動
-#    12. 最終確認情報表示
+#    12. logrotate 設定を配置
+#    13. ディスク使用量監視スクリプトのセットアップ
+#    14. 最終確認情報表示
 #
 # 実行例:
 #   sudo ./scripts/setup-mvp0.sh
@@ -41,9 +43,21 @@ RSYSLOG_CONF_SRC="${REPO_ROOT}/rsyslog/10-syslog-appliance.conf"
 RSYSLOG_CONF_DEST="/etc/rsyslog.d/10-syslog-appliance.conf"
 APPLIANCE_CONF_SRC="${REPO_ROOT}/etc/syslog-appliance/appliance.conf.example"
 DEVICES_YAML_SRC="${REPO_ROOT}/etc/syslog-appliance/devices.yaml.example"
+LOGROTATE_CONF_SRC="${REPO_ROOT}/logrotate/syslog-appliance"
+LOGROTATE_CONF_DEST="/etc/logrotate.d/syslog-appliance"
 ETC_DIR="/etc/syslog-appliance"
 LOG_DIR="/var/log/syslog-appliance/raw"
 BACKUP_DIR="/var/log/syslog-appliance/.backup"
+
+# ディスク使用量監視スクリプト関連パス
+DISK_CHECK_SCRIPT_SRC="${REPO_ROOT}/scripts/check-disk-usage.sh"
+DISK_CHECK_SCRIPT_DEST="/opt/syslog-appliance/scripts/check-disk-usage.sh"
+DISK_CHECK_SCRIPT_DIR="/opt/syslog-appliance/scripts"
+DISK_CHECK_SERVICE_SRC="${REPO_ROOT}/systemd/syslog-appliance-disk-check.service"
+DISK_CHECK_SERVICE_DEST="/etc/systemd/system/syslog-appliance-disk-check.service"
+DISK_CHECK_TIMER_SRC="${REPO_ROOT}/systemd/syslog-appliance-disk-check.timer"
+DISK_CHECK_TIMER_DEST="/etc/systemd/system/syslog-appliance-disk-check.timer"
+NOTIFICATION_DIR="/var/lib/syslog-appliance/notifications"
 
 SYSLOG_PORT="514"
 SYSLOG_PROTO_UDP="udp"
@@ -414,7 +428,104 @@ if [[ "${DRY_RUN}" == false ]]; then
 fi
 
 # =============================================================================
-# ステップ 12: 最終確認情報の表示
+# ステップ 12: logrotate 設定を配置
+# =============================================================================
+log_info "[Step 12] logrotate 設定ファイルを配置..."
+
+# ソースファイルの存在確認
+if [[ ! -f "${LOGROTATE_CONF_SRC}" ]]; then
+    log_error "logrotate 設定ファイルが見つかりません: ${LOGROTATE_CONF_SRC}"
+    exit 1
+fi
+
+# 既存ファイルのバックアップ
+if [[ -f "${LOGROTATE_CONF_DEST}" ]]; then
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    LOGROTATE_BACKUP="${BACKUP_DIR}/syslog-appliance.logrotate.${TIMESTAMP}"
+    run_cmd cp "${LOGROTATE_CONF_DEST}" "${LOGROTATE_BACKUP}"
+    log_ok "既存 logrotate 設定をバックアップ: ${LOGROTATE_BACKUP}"
+fi
+
+# 配置・権限設定
+run_cmd cp "${LOGROTATE_CONF_SRC}" "${LOGROTATE_CONF_DEST}"
+run_cmd chown root:root "${LOGROTATE_CONF_DEST}"
+run_cmd chmod 0644 "${LOGROTATE_CONF_DEST}"
+log_ok "logrotate 設定ファイルを配置: ${LOGROTATE_CONF_DEST}"
+
+# 構文チェック（dry-run でも実行して設定の正しさを確認する）
+log_info "logrotate 設定の構文チェック（dry-run）..."
+if [[ "${DRY_RUN}" == true ]]; then
+    echo -e "${C_WARN}[DRY-RUN]${C_RESET} logrotate -d ${LOGROTATE_CONF_DEST}"
+else
+    if logrotate -d "${LOGROTATE_CONF_DEST}" 2>&1; then
+        log_ok "logrotate 構文チェック OK。"
+    else
+        log_warn "logrotate の構文チェックで警告が出ました。設定を確認してください: ${LOGROTATE_CONF_DEST}"
+    fi
+fi
+
+# =============================================================================
+# ステップ 13: ディスク使用量監視スクリプトのセットアップ
+# =============================================================================
+log_info "[Step 13] ディスク使用量監視スクリプトをセットアップ..."
+
+# ソースファイルの存在確認
+if [[ ! -f "${DISK_CHECK_SCRIPT_SRC}" ]]; then
+    log_error "check-disk-usage.sh が見つかりません: ${DISK_CHECK_SCRIPT_SRC}"
+    exit 1
+fi
+if [[ ! -f "${DISK_CHECK_SERVICE_SRC}" ]]; then
+    log_error "systemd サービスファイルが見つかりません: ${DISK_CHECK_SERVICE_SRC}"
+    exit 1
+fi
+if [[ ! -f "${DISK_CHECK_TIMER_SRC}" ]]; then
+    log_error "systemd タイマーファイルが見つかりません: ${DISK_CHECK_TIMER_SRC}"
+    exit 1
+fi
+
+# 配置先スクリプトディレクトリの作成（存在しない場合のみ）
+run_cmd mkdir -p "${DISK_CHECK_SCRIPT_DIR}"
+run_cmd chown root:root "${DISK_CHECK_SCRIPT_DIR}"
+run_cmd chmod 0755 "${DISK_CHECK_SCRIPT_DIR}"
+
+# 監視スクリプトを配置（実行権限: 0755）
+run_cmd cp "${DISK_CHECK_SCRIPT_SRC}" "${DISK_CHECK_SCRIPT_DEST}"
+run_cmd chown root:root "${DISK_CHECK_SCRIPT_DEST}"
+run_cmd chmod 0755 "${DISK_CHECK_SCRIPT_DEST}"
+log_ok "監視スクリプトを配置: ${DISK_CHECK_SCRIPT_DEST}"
+
+# systemd サービスファイルを配置（権限: 0644）
+run_cmd cp "${DISK_CHECK_SERVICE_SRC}" "${DISK_CHECK_SERVICE_DEST}"
+run_cmd chown root:root "${DISK_CHECK_SERVICE_DEST}"
+run_cmd chmod 0644 "${DISK_CHECK_SERVICE_DEST}"
+log_ok "サービスファイルを配置: ${DISK_CHECK_SERVICE_DEST}"
+
+# systemd タイマーファイルを配置（権限: 0644）
+run_cmd cp "${DISK_CHECK_TIMER_SRC}" "${DISK_CHECK_TIMER_DEST}"
+run_cmd chown root:root "${DISK_CHECK_TIMER_DEST}"
+run_cmd chmod 0644 "${DISK_CHECK_TIMER_DEST}"
+log_ok "タイマーファイルを配置: ${DISK_CHECK_TIMER_DEST}"
+
+# 通知ファイル配置ディレクトリの作成（Web UI 用・権限: 0750）
+run_cmd mkdir -p "${NOTIFICATION_DIR}"
+run_cmd chown root:root "${NOTIFICATION_DIR}"
+run_cmd chmod 0750 "${NOTIFICATION_DIR}"
+log_ok "通知ファイルディレクトリを作成: ${NOTIFICATION_DIR}"
+
+# systemd デーモンをリロードしてタイマーを有効化・開始する
+run_cmd systemctl daemon-reload
+run_cmd systemctl enable --now syslog-appliance-disk-check.timer
+if [[ "${DRY_RUN}" == false ]]; then
+    if systemctl is-active --quiet syslog-appliance-disk-check.timer; then
+        log_ok "ディスク使用量監視タイマーが有効化・起動されました。"
+    else
+        log_warn "タイマーの起動状態を確認できませんでした。"
+        log_warn "  sudo systemctl status syslog-appliance-disk-check.timer を確認してください。"
+    fi
+fi
+
+# =============================================================================
+# ステップ 14: 最終確認情報の表示
 # =============================================================================
 echo ""
 log_info "=========================================="

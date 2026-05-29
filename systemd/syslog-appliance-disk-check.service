@@ -1,0 +1,10 @@
+[Unit]
+Description=syslog-appliance Disk Usage Check
+After=syslog-appliance.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/opt/syslog-appliance/scripts/check-disk-usage.sh
+StandardOutput=journal
+StandardError=journal

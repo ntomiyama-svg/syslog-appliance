@@ -7,12 +7,14 @@
 #   setup-mvp0.sh で行った変更を取り消します。
 #
 #   以下の作業を自動化します:
-#     1. rsyslog 設定ファイルの削除（バックアップとして移動）
-#     2. rsyslog 構文チェック
-#     3. rsyslog 再起動
-#     4. firewalld からの 514/udp, 514/tcp 許可を削除
-#     5. （オプション）SELinux ポート設定の削除
-#     6. 最終確認情報表示
+#     1. ディスク使用量監視タイマーの無効化（ファイル移動）
+#     2. rsyslog 設定ファイルの削除（バックアップとして移動）
+#     3. logrotate 設定ファイルの削除（バックアップとして移動）
+#     4. rsyslog 構文チェック
+#     5. rsyslog 再起動
+#     6. firewalld からの 514/udp, 514/tcp 許可を削除
+#     7. （オプション）SELinux ポート設定の削除
+#     8. 最終確認情報表示
 #
 #   ※ /var/log/syslog-appliance/raw/ 配下のログは削除しません。
 #      ログの削除はオペレータが判断して手動で行ってください。
@@ -30,7 +32,15 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 RSYSLOG_CONF_DEST="/etc/rsyslog.d/10-syslog-appliance.conf"
+LOGROTATE_CONF_DEST="/etc/logrotate.d/syslog-appliance"
 BACKUP_DIR="/var/log/syslog-appliance/.backup"
+
+# ディスク使用量監視スクリプト関連パス
+DISK_CHECK_SCRIPT_DEST="/opt/syslog-appliance/scripts/check-disk-usage.sh"
+DISK_CHECK_SERVICE_DEST="/etc/systemd/system/syslog-appliance-disk-check.service"
+DISK_CHECK_TIMER_DEST="/etc/systemd/system/syslog-appliance-disk-check.timer"
+DISK_CHECK_TIMER_NAME="syslog-appliance-disk-check.timer"
+NOTIFICATION_DATA_DIR="/var/lib/syslog-appliance/notifications"
 
 SYSLOG_PORT="514"
 SYSLOG_PROTO_UDP="udp"
@@ -148,9 +158,56 @@ fi
 log_ok "root 権限で実行中。"
 
 # =============================================================================
-# ステップ 1: rsyslog 設定ファイルの削除（バックアップとして移動）
+# ステップ 1: ディスク使用量監視タイマーの無効化とファイルの移動
 # =============================================================================
-log_info "[Step 1] rsyslog 設定ファイルを削除（バックアップとして移動）..."
+log_info "[Step 1] ディスク使用量監視タイマーを無効化..."
+
+# バックアップディレクトリを事前に作成しておく
+run_cmd mkdir -p "${BACKUP_DIR}"
+
+# タイマーユニットが存在する場合のみ無効化する（冪等処理）
+if [[ "${DRY_RUN}" == true ]]; then
+    echo -e "${C_WARN}[DRY-RUN]${C_RESET} systemctl disable --now ${DISK_CHECK_TIMER_NAME}"
+elif systemctl list-unit-files --type=timer 2>/dev/null | grep -q "${DISK_CHECK_TIMER_NAME}"; then
+    systemctl disable --now "${DISK_CHECK_TIMER_NAME}" && \
+        log_ok "タイマー ${DISK_CHECK_TIMER_NAME} を無効化しました。" || \
+        log_warn "タイマーの無効化に失敗しました（既に停止中の可能性あり）。"
+else
+    log_info "タイマー ${DISK_CHECK_TIMER_NAME} が見つかりません。スキップします。"
+fi
+
+# systemd デーモンをリロードしてユニットキャッシュを更新する
+run_cmd systemctl daemon-reload
+
+# systemd ユニットファイルをバックアップとして移動する
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+for SVC_FILE in "${DISK_CHECK_TIMER_DEST}" "${DISK_CHECK_SERVICE_DEST}"; do
+    if [[ -f "${SVC_FILE}" ]]; then
+        REMOVED_FILE="${BACKUP_DIR}/$(basename "${SVC_FILE}").removed.${TIMESTAMP}"
+        run_cmd mv "${SVC_FILE}" "${REMOVED_FILE}"
+        log_ok "$(basename "${SVC_FILE}") を移動: ${REMOVED_FILE}"
+    else
+        log_info "ファイルが見つかりません: ${SVC_FILE}（スキップ）"
+    fi
+done
+
+# 監視スクリプト本体をバックアップとして移動する
+if [[ -f "${DISK_CHECK_SCRIPT_DEST}" ]]; then
+    REMOVED_FILE="${BACKUP_DIR}/check-disk-usage.sh.removed.${TIMESTAMP}"
+    run_cmd mv "${DISK_CHECK_SCRIPT_DEST}" "${REMOVED_FILE}"
+    log_ok "check-disk-usage.sh を移動: ${REMOVED_FILE}"
+else
+    log_info "ファイルが見つかりません: ${DISK_CHECK_SCRIPT_DEST}（スキップ）"
+fi
+
+# 通知ファイル（/var/lib/syslog-appliance/notifications/）は削除しない
+# Web UI や外部システムが参照している可能性があるため、データの保全を優先する
+log_info "通知ファイル（${NOTIFICATION_DATA_DIR}/）はデータ保全のため削除しません。"
+
+# =============================================================================
+# ステップ 2: rsyslog 設定ファイルの削除（バックアップとして移動）
+# =============================================================================
+log_info "[Step 2] rsyslog 設定ファイルを削除（バックアップとして移動）..."
 if [[ -f "${RSYSLOG_CONF_DEST}" ]]; then
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
     REMOVED_FILE="${BACKUP_DIR}/10-syslog-appliance.conf.removed.${TIMESTAMP}"
@@ -164,9 +221,24 @@ else
 fi
 
 # =============================================================================
-# ステップ 2: rsyslog 構文チェック
+# ステップ 3: logrotate 設定ファイルの削除（バックアップとして移動）
 # =============================================================================
-log_info "[Step 2] rsyslog 設定の構文チェック..."
+log_info "[Step 3] logrotate 設定ファイルを削除（バックアップとして移動）..."
+if [[ -f "${LOGROTATE_CONF_DEST}" ]]; then
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    REMOVED_FILE="${BACKUP_DIR}/syslog-appliance.logrotate.removed.${TIMESTAMP}"
+    run_cmd mkdir -p "${BACKUP_DIR}"
+    run_cmd mv "${LOGROTATE_CONF_DEST}" "${REMOVED_FILE}"
+    log_ok "logrotate 設定ファイルを移動: ${LOGROTATE_CONF_DEST} -> ${REMOVED_FILE}"
+else
+    log_info "logrotate 設定ファイルが見つかりません: ${LOGROTATE_CONF_DEST}"
+    log_info "既にロールバック済みか、手動で削除された可能性があります。"
+fi
+
+# =============================================================================
+# ステップ 4: rsyslog 構文チェック
+# =============================================================================
+log_info "[Step 4] rsyslog 設定の構文チェック..."
 if [[ "${DRY_RUN}" == true ]]; then
     log_warn "[DRY-RUN] rsyslogd -N1 の実行をスキップします。"
 else
@@ -180,9 +252,9 @@ else
 fi
 
 # =============================================================================
-# ステップ 3: rsyslog 再起動
+# ステップ 5: rsyslog 再起動
 # =============================================================================
-log_info "[Step 3] rsyslog を再起動..."
+log_info "[Step 5] rsyslog を再起動..."
 run_cmd systemctl restart rsyslog
 if [[ "${DRY_RUN}" == false ]]; then
     if systemctl is-active --quiet rsyslog; then
@@ -195,9 +267,9 @@ if [[ "${DRY_RUN}" == false ]]; then
 fi
 
 # =============================================================================
-# ステップ 4: firewalld から 514/udp, 514/tcp の許可を削除
+# ステップ 6: firewalld から 514/udp, 514/tcp の許可を削除
 # =============================================================================
-log_info "[Step 4] firewalld の 514/udp, 514/tcp 許可を削除..."
+log_info "[Step 6] firewalld の 514/udp, 514/tcp 許可を削除..."
 
 # 通常のポート許可を削除（--add-port で追加されたもの）
 for PROTO in "${SYSLOG_PROTO_UDP}" "${SYSLOG_PROTO_TCP}"; do
@@ -233,9 +305,9 @@ run_cmd firewall-cmd --reload
 log_ok "firewalld をリロードしました。"
 
 # =============================================================================
-# ステップ 5: SELinux ポート設定の削除（オプション）
+# ステップ 7: SELinux ポート設定の削除（オプション）
 # =============================================================================
-log_info "[Step 5] SELinux ポート設定の確認..."
+log_info "[Step 7] SELinux ポート設定の確認..."
 if [[ "${REMOVE_SELINUX_PORT}" == true ]]; then
     SELINUX_STATUS=$(getenforce 2>/dev/null || echo "Disabled")
     if [[ "${SELINUX_STATUS}" == "Disabled" ]]; then
@@ -265,7 +337,7 @@ else
 fi
 
 # =============================================================================
-# ステップ 6: 最終確認情報の表示
+# ステップ 8: 最終確認情報の表示
 # =============================================================================
 echo ""
 log_info "=========================================="
@@ -292,6 +364,7 @@ log_warn "=========================================="
 log_warn "  - /var/log/syslog-appliance/raw/  （受信済みログ）"
 log_warn "  - /var/log/syslog-appliance/.backup/  （バックアップファイル）"
 log_warn "  - /etc/syslog-appliance/  （設定雛形ファイル）"
+log_warn "  - /var/lib/syslog-appliance/notifications/  （通知ファイル）"
 log_warn "  必要に応じて手動で削除してください。"
 echo ""
 log_ok "=========================================="

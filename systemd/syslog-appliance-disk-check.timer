@@ -1,0 +1,12 @@
+[Unit]
+Description=Run syslog-appliance Disk Usage Check every 5 minutes
+Requires=syslog-appliance-disk-check.service
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=syslog-appliance-disk-check.service
+
+[Install]
+WantedBy=timers.target

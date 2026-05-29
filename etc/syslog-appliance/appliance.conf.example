@@ -77,3 +77,40 @@ raw_log_dir = /var/log/syslog-appliance/raw
 # listen_address = 0.0.0.0
 # listen_port = 8080
 # secret_key_file = /etc/syslog-appliance/secret.key
+
+# ---------------------------------------------------------------------------
+# [notification] セクション: 警告通知に関する設定
+# ---------------------------------------------------------------------------
+[notification]
+
+# メール通知の有効化（true / false）
+#
+# 注意: MVP 0 強化フェーズでは枠のみ作成。
+#       実際のメール送信（sendmail/mail コマンドの呼び出し）は MVP 1 以降で実装。
+#       true にした場合も、SMTP 設定が未入力であれば送信をスキップし
+#       /var/log/syslog-appliance/alerts.log に警告を記録します。
+mail_enabled = false
+
+# SMTP サーバーのホスト名または IP アドレス
+smtp_server =
+
+# SMTP ポート番号（デフォルト: 25）
+smtp_port = 25
+
+# 送信元メールアドレス（From ヘッダ）
+smtp_from =
+
+# 送信先メールアドレス（To ヘッダ）
+smtp_to =
+
+# ---------------------------------------------------------------------------
+# [monitoring] セクション: 監視に関する設定
+# ---------------------------------------------------------------------------
+[monitoring]
+
+# ディスク使用率監視の閾値（%）
+# WARN 閾値以上でアラートログ・メール・通知ファイルに警告を出力します。
+disk_threshold_warn = 80
+
+# CRITICAL 閾値以上でより上位の警告を出力します。
+disk_threshold_critical = 90
