@@ -112,11 +112,11 @@
   /** フィルタ条件に合う機器リストを返す */
   function getFilteredDevices() {
     return allDevices.filter(function (d) {
-      const matchGroup  = !filterGroup  || d.group === filterGroup;
+      const matchGroup  = !filterGroup  || d.group_name === filterGroup;
       const matchSearch = !filterSearch ||
-        (d.ip_address  || '').toLowerCase().includes(filterSearch) ||
+        (d.ip          || '').toLowerCase().includes(filterSearch) ||
         (d.hostname    || '').toLowerCase().includes(filterSearch) ||
-        (d.name        || '').toLowerCase().includes(filterSearch) ||
+        (d.device_name || '').toLowerCase().includes(filterSearch) ||
         (d.location    || '').toLowerCase().includes(filterSearch);
       return matchGroup && matchSearch;
     });
@@ -125,7 +125,7 @@
   /** グループ select のオプションを最新の機器データで更新する */
   function updateGroupFilter() {
     const groups = Array.from(
-      new Set(allDevices.map(function (d) { return d.group; }).filter(Boolean))
+      new Set(allDevices.map(function (d) { return d.group_name; }).filter(Boolean))
     ).sort();
 
     // 現在の選択値を保持しつつ再描画
@@ -154,10 +154,10 @@
 
     tbody.innerHTML = devices.map(function (d) {
       return '<tr>' +
-        '<td class="ps-3"><span class="ip-address">' + esc(d.ip_address) + '</span></td>' +
+        '<td class="ps-3"><span class="ip-address">' + esc(d.ip) + '</span></td>' +
         '<td>' + esc(d.hostname || '—') + '</td>' +
-        '<td>' + esc(d.name || '—') + '</td>' +
-        '<td>' + (d.group ? '<span class="group-badge">' + esc(d.group) + '</span>' : '<span class="text-muted">—</span>') + '</td>' +
+        '<td>' + esc(d.device_name || '—') + '</td>' +
+        '<td>' + (d.group_name ? '<span class="group-badge">' + esc(d.group_name) + '</span>' : '<span class="text-muted">—</span>') + '</td>' +
         '<td>' + esc(d.location || '—') + '</td>' +
         '<td class="text-end pe-3">' +
           '<button class="btn btn-outline-primary btn-action btn-action-edit me-1" ' +
@@ -212,10 +212,10 @@
     clearFormValidation();
 
     formDeviceId.value  = device.id;
-    formIp.value        = device.ip_address  || '';
+    formIp.value        = device.ip          || '';
     formHostname.value  = device.hostname    || '';
-    formName.value      = device.name        || '';
-    formGroup.value     = device.group       || '';
+    formName.value      = device.device_name || '';
+    formGroup.value     = device.group_name  || '';
     formLocation.value  = device.location    || '';
     formDesc.value      = device.description || '';
 
@@ -229,7 +229,7 @@
     if (!device) return;
 
     deletingId = id;
-    const label = [device.ip_address, device.name || device.hostname]
+    const label = [device.ip, device.device_name || device.hostname]
       .filter(Boolean).join(' / ');
     deleteLabel.textContent = label;
     deleteModal.show();
@@ -242,10 +242,10 @@
     if (!validateForm()) return;
 
     const data = {
-      ip_address:  formIp.value.trim(),
+      ip:          formIp.value.trim(),
       hostname:    formHostname.value.trim()  || null,
-      name:        formName.value.trim()      || null,
-      group:       formGroup.value.trim()     || null,
+      device_name: formName.value.trim()      || null,
+      group_name:  formGroup.value.trim()     || null,
       location:    formLocation.value.trim()  || null,
       description: formDesc.value.trim()      || null,
     };

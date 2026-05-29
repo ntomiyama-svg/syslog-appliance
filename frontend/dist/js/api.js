@@ -31,7 +31,14 @@
       let detail = `HTTP ${res.status}`;
       try {
         const json = await res.json();
-        detail = json.detail || detail;
+        if (Array.isArray(json.detail)) {
+          detail = json.detail.map(function (e) {
+            const loc = e.loc ? e.loc.slice(1).join('.') : '';
+            return loc ? loc + ': ' + e.msg : e.msg;
+          }).join(', ');
+        } else if (json.detail) {
+          detail = json.detail;
+        }
       } catch (_) {
         // JSON でない場合はデフォルトメッセージを使う
       }
