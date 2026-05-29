@@ -11,6 +11,9 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+# frontend/dist/ は静的 Web ファイルのため Git 管理対象とする
+!frontend/dist/
+!frontend/dist/**
 downloads/
 eggs/
 .eggs/
