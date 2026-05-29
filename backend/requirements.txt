@@ -1,3 +1,5 @@
+# Python 3.9 以降で動作確認
+# Rocky Linux 9 標準の Python 3.9 で動作することを優先
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 sqlalchemy==2.0.35
