@@ -1,0 +1,38 @@
+[Unit]
+Description=syslog-appliance Backend API (FastAPI/uvicorn)
+Documentation=https://github.com/js-tech/syslog-appliance
+After=network-online.target syslog-appliance-disk-check.timer
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=syslog-appliance
+Group=syslog-appliance
+WorkingDirectory=/opt/syslog-appliance/backend
+
+# 環境変数は /etc/syslog-appliance/backend.env で管理する
+# AUTH_PASS を含むため、ファイルのパーミッションは 640 (root:syslog-appliance) に設定すること
+EnvironmentFile=/etc/syslog-appliance/backend.env
+
+ExecStart=/opt/syslog-appliance/backend/venv/bin/uvicorn \
+    app.main:app \
+    --host 0.0.0.0 \
+    --port 8080 \
+    --log-level info \
+    --no-access-log
+
+# 失敗時は 5 秒後に自動再起動。60 秒以内に 5 回以上失敗したら停止する
+Restart=on-failure
+RestartSec=5s
+StartLimitInterval=60s
+StartLimitBurst=5
+
+# セキュリティ強化: 不要な権限を剥奪する
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/syslog-appliance
+ReadOnlyPaths=/etc/syslog-appliance
+
+[Install]
+WantedBy=multi-user.target
