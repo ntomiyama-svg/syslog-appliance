@@ -1,0 +1,76 @@
+# =============================================================================
+# /etc/logrotate.d/syslog-appliance
+#
+# syslog-appliance が受信したリモートログのローテーション設定です。
+#
+# 対象ファイル:
+#   /var/log/syslog-appliance/raw/<送信元IP>/<YYYY-MM-DD>.log
+#   ※ ホスト別フォルダ（*）の中にある .log ファイルすべてが対象です。
+#
+# 各オプションの説明:
+#
+#   daily
+#     毎日（cron.daily 経由）ローテーションを実行します。
+#
+#   rotate 90
+#     最大 90 世代（約 90 日分）のログを保持します。
+#     91 世代目以降は古いものから順に自動削除されます。
+#
+#   compress
+#     ローテーション済みのログファイルを gzip で圧縮します。
+#     ディスク使用量を大幅に削減できます。
+#
+#   delaycompress
+#     直前にローテーションしたファイル（1 世代前）は圧縮しません。
+#     圧縮は 1 日後（次のローテーション時）に行います。
+#     これにより、rsyslog が古いファイルディスクリプタでまだ書き込む
+#     可能性がある直後の期間でも、ファイルが読めない状態になりません。
+#
+#   missingok
+#     対象ファイルが存在しなくてもエラーにしません。
+#     ログがまだ 1 件も受信されていない場合でも安全に動作します。
+#
+#   notifempty
+#     ファイルが空（0 バイト）の場合はローテーションをスキップします。
+#
+#   dateext
+#     ローテーション後のファイル名に日付サフィックスを付けます。
+#     例: 192.168.1.1/2025-06-01.log-20250602
+#
+#   dateformat -%Y%m%d
+#     dateext の日付フォーマットを指定します。
+#     -%Y%m%d の場合、サフィックスは -20250602 のようになります。
+#
+#   create 0640 root root
+#     ローテーション後、空の新しいログファイルを作成します。
+#     パーミッション 0640（所有者のみ読み書き可、グループ読み取り可）、
+#     所有者 root:root で作成します。
+#
+#   sharedscripts
+#     postrotate スクリプトを、対象ファイルごとに 1 回ずつではなく
+#     すべての対象ファイルのローテーション後に 1 回だけ実行します。
+#     不要な rsyslog reload を防ぎます。
+#
+#   postrotate / endscript
+#     ローテーション完了後に実行するシェルスクリプトのブロックです。
+#     rsyslog に SIGHUP シグナル（reload）を送り、ログファイルを
+#     再オープンさせます。これを行わないと rsyslog が古い
+#     ファイルディスクリプタに書き続けてしまいます。
+#     失敗してもエラーを無視（|| true）して処理を継続します。
+# =============================================================================
+
+/var/log/syslog-appliance/raw/*/*.log {
+    daily
+    rotate 90
+    compress
+    delaycompress
+    missingok
+    notifempty
+    dateext
+    dateformat -%Y%m%d
+    create 0640 root root
+    sharedscripts
+    postrotate
+        /usr/bin/systemctl reload rsyslog.service > /dev/null 2>&1 || true
+    endscript
+}
