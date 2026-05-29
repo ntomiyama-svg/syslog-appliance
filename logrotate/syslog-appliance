@@ -74,3 +74,31 @@
         /usr/bin/systemctl reload rsyslog.service > /dev/null 2>&1 || true
     endscript
 }
+
+# =============================================================================
+# rsyslog 受信統計ログのローテーション設定（T6）
+#
+# 対象ファイル:
+#   /var/log/syslog-appliance/stats/rsyslog-stats.log
+#   ※ impstats モジュールが 10 分ごとに JSON 形式で出力する統計ファイル。
+#
+# 生ログ（raw/）との違い:
+#   - 保持期間を 30 日に短縮（統計データは直近分のみ参照するため）
+#   - ローテーション後のシグナルは上記 raw セクションと共通（sharedscripts）
+#     ではなく独立させ、stats の reload タイミングを明確にする
+# =============================================================================
+/var/log/syslog-appliance/stats/*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    dateext
+    dateformat -%Y%m%d
+    create 0640 root root
+    sharedscripts
+    postrotate
+        /usr/bin/systemctl reload rsyslog.service > /dev/null 2>&1 || true
+    endscript
+}

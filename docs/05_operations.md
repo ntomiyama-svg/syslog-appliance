@@ -60,6 +60,86 @@ sudo /opt/syslog-appliance/scripts/check-disk-usage.sh
 sudo /opt/syslog-appliance/scripts/check-disk-usage.sh --dry-run
 ```
 
+## 受信元制限の設定方法
+
+### 概要
+
+`/etc/syslog-appliance/appliance.conf` の `[receive]` セクションにある
+`allowed_sources` を編集し、`apply-appliance-conf.sh` を実行することで
+firewalld の受信元制限を動的に変更できます。
+
+### 設定手順
+
+1. 設定ファイルを編集する
+
+```bash
+sudo vi /etc/syslog-appliance/appliance.conf
+```
+
+```ini
+[receive]
+# 全許可（制限なし）の場合:
+allowed_sources =
+
+# 送信元を制限する場合（カンマ区切りで複数指定可能）:
+allowed_sources = 192.168.1.0/24,10.0.0.0/8
+```
+
+2. 事前確認（dry-run）
+
+```bash
+sudo /opt/syslog-appliance/scripts/apply-appliance-conf.sh --dry-run
+```
+
+3. 設定を適用する
+
+```bash
+sudo /opt/syslog-appliance/scripts/apply-appliance-conf.sh
+```
+
+### 動作仕様
+
+| `allowed_sources` の値 | firewalld の動作 |
+|------------------------|-----------------|
+| 空欄（デフォルト）      | ポート許可（全送信元から 514/udp, 514/tcp を受信） |
+| CIDR 指定              | rich rule で指定 CIDR からのみ 514/udp, 514/tcp を許可（ポート許可は削除） |
+
+### 注意事項
+
+- `apply-appliance-conf.sh` は既存の 514 関連 rich rule をすべて削除してから再設定します。
+- ロールバック（`rollback-mvp0.sh`）では rich rule は削除されません。必要な場合は手動で削除してください。
+- `setup-mvp0.sh --allow-from` オプションでも初回設定時に受信元制限を設定できます。
+
+---
+
+## rsyslog 受信統計
+
+### 概要
+
+`impstats` モジュールにより、rsyslog の動作統計（受信メッセージ数、処理速度、キュー状態等）を
+定期的にファイルに記録します。
+
+### 出力先
+
+- ファイル: `/var/log/syslog-appliance/stats/rsyslog-stats.log`
+- 形式: JSON Lines（1 行 = 1 統計スナップショット）
+- 記録間隔: 10 分ごと（interval=600）
+- 保持期間: 30 日（logrotate により日次ローテーション）
+
+### リアルタイム確認
+
+```bash
+sudo tail -f /var/log/syslog-appliance/stats/rsyslog-stats.log
+```
+
+### 設定ファイル
+
+- リポジトリ: `rsyslog/11-syslog-appliance-stats.conf`
+- 配置先: `/etc/rsyslog.d/11-syslog-appliance-stats.conf`
+- 自動配置: `setup-mvp0.sh` の Step 13 で行われます
+
+---
+
 ## journald のディスク使用制限
 
 ### 現在の設定

@@ -7,20 +7,23 @@
 #   Rocky Linux 9 上で rsyslog によるリモートログ受信環境を構築します。
 #
 #   以下の作業を自動化します:
+#     0. root 権限チェック
 #     1. 前提チェック（rsyslog, firewalld, SELinux 状態確認）
 #     2. バックアップディレクトリ作成
 #     3. 既存設定ファイルのバックアップ
-#     4. ログ保存ディレクトリ（/var/log/syslog-appliance/raw/）作成
+#     4. ログ保存ディレクトリ（raw/ および stats/）作成
 #     5. アプライアンス設定ディレクトリ（/etc/syslog-appliance/）作成
-#     6. rsyslog 設定ファイルの配置
+#     6. rsyslog メイン設定ファイルの配置（10-syslog-appliance.conf）
 #     7. 設定雛形ファイルのコピー
 #     8. SELinux コンテキスト設定
 #     9. rsyslog 構文チェック
 #    10. firewalld へのポート許可追加
-#    11. rsyslog 再起動
-#    12. logrotate 設定を配置
-#    13. ディスク使用量監視スクリプトのセットアップ
-#    14. 最終確認情報表示
+#    11. logrotate 設定を配置
+#    12. ディスク使用量監視スクリプトのセットアップ
+#    13. rsyslog 統計設定の配置（11-syslog-appliance-stats.conf）
+#    14. rsyslog 再起動（全設定ファイル配置完了後）
+#    15. apply-appliance-conf.sh のシステム配置
+#    16. 最終確認情報表示
 #
 # 実行例:
 #   sudo ./scripts/setup-mvp0.sh
@@ -41,12 +44,15 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 RSYSLOG_CONF_SRC="${REPO_ROOT}/rsyslog/10-syslog-appliance.conf"
 RSYSLOG_CONF_DEST="/etc/rsyslog.d/10-syslog-appliance.conf"
+RSYSLOG_STATS_CONF_SRC="${REPO_ROOT}/rsyslog/11-syslog-appliance-stats.conf"
+RSYSLOG_STATS_CONF_DEST="/etc/rsyslog.d/11-syslog-appliance-stats.conf"
 APPLIANCE_CONF_SRC="${REPO_ROOT}/etc/syslog-appliance/appliance.conf.example"
 DEVICES_YAML_SRC="${REPO_ROOT}/etc/syslog-appliance/devices.yaml.example"
 LOGROTATE_CONF_SRC="${REPO_ROOT}/logrotate/syslog-appliance"
 LOGROTATE_CONF_DEST="/etc/logrotate.d/syslog-appliance"
 ETC_DIR="/etc/syslog-appliance"
 LOG_DIR="/var/log/syslog-appliance/raw"
+STATS_LOG_DIR="/var/log/syslog-appliance/stats"
 BACKUP_DIR="/var/log/syslog-appliance/.backup"
 
 # ディスク使用量監視スクリプト関連パス
@@ -58,6 +64,10 @@ DISK_CHECK_SERVICE_DEST="/etc/systemd/system/syslog-appliance-disk-check.service
 DISK_CHECK_TIMER_SRC="${REPO_ROOT}/systemd/syslog-appliance-disk-check.timer"
 DISK_CHECK_TIMER_DEST="/etc/systemd/system/syslog-appliance-disk-check.timer"
 NOTIFICATION_DIR="/var/lib/syslog-appliance/notifications"
+
+# 受信元制限スクリプト関連パス（T2）
+APPLY_CONF_SCRIPT_SRC="${REPO_ROOT}/scripts/apply-appliance-conf.sh"
+APPLY_CONF_SCRIPT_DEST="/opt/syslog-appliance/scripts/apply-appliance-conf.sh"
 
 SYSLOG_PORT="514"
 SYSLOG_PROTO_UDP="udp"
@@ -237,6 +247,12 @@ if [[ ! -f "${RSYSLOG_CONF_SRC}" ]]; then
 fi
 log_ok "ソースファイル確認: ${RSYSLOG_CONF_SRC}"
 
+if [[ ! -f "${RSYSLOG_STATS_CONF_SRC}" ]]; then
+    log_error "rsyslog 統計設定ファイルが見つかりません: ${RSYSLOG_STATS_CONF_SRC}"
+    exit 1
+fi
+log_ok "ソースファイル確認: ${RSYSLOG_STATS_CONF_SRC}"
+
 # =============================================================================
 # ステップ 2: バックアップディレクトリ作成
 # =============================================================================
@@ -259,6 +275,13 @@ else
     log_info "既存の設定ファイルはありません。スキップします。"
 fi
 
+if [[ -f "${RSYSLOG_STATS_CONF_DEST}" ]]; then
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    BACKUP_FILE="${BACKUP_DIR}/11-syslog-appliance-stats.conf.${TIMESTAMP}"
+    run_cmd cp "${RSYSLOG_STATS_CONF_DEST}" "${BACKUP_FILE}"
+    log_ok "既存ファイルをバックアップ: ${BACKUP_FILE}"
+fi
+
 # /etc/rsyslog.conf の念のためのバックアップ（変更はしない）
 if [[ -f /etc/rsyslog.conf ]]; then
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -275,6 +298,8 @@ fi
 # ステップ 4: ログ保存ディレクトリ作成
 # =============================================================================
 log_info "[Step 4] ログ保存ディレクトリを作成..."
+
+# 受信ログ用ディレクトリ
 run_cmd mkdir -p "${LOG_DIR}"
 run_cmd chmod 0750 "${LOG_DIR}"
 run_cmd chown root:root "${LOG_DIR}"
@@ -282,6 +307,13 @@ run_cmd chown root:root "${LOG_DIR}"
 run_cmd chmod 0750 "$(dirname "${LOG_DIR}")"
 run_cmd chown root:root "$(dirname "${LOG_DIR}")"
 log_ok "ログ保存ディレクトリ: ${LOG_DIR}"
+
+# rsyslog 受信統計用ディレクトリを作成する（T6 対応）
+# impstats が出力する rsyslog-stats.log の格納先
+run_cmd mkdir -p "${STATS_LOG_DIR}"
+run_cmd chmod 0750 "${STATS_LOG_DIR}"
+run_cmd chown root:root "${STATS_LOG_DIR}"
+log_ok "統計ログディレクトリ: ${STATS_LOG_DIR}"
 
 # =============================================================================
 # ステップ 5: アプライアンス設定ディレクトリ作成
@@ -413,24 +445,9 @@ run_cmd firewall-cmd --reload
 log_ok "firewalld をリロードしました。"
 
 # =============================================================================
-# ステップ 11: rsyslog 再起動
+# ステップ 11: logrotate 設定を配置
 # =============================================================================
-log_info "[Step 11] rsyslog を再起動..."
-run_cmd systemctl restart rsyslog
-if [[ "${DRY_RUN}" == false ]]; then
-    if systemctl is-active --quiet rsyslog; then
-        log_ok "rsyslog が正常に起動しました。"
-    else
-        log_error "rsyslog の起動に失敗しました。"
-        log_error "  journalctl -xeu rsyslog で詳細を確認してください。"
-        exit 1
-    fi
-fi
-
-# =============================================================================
-# ステップ 12: logrotate 設定を配置
-# =============================================================================
-log_info "[Step 12] logrotate 設定ファイルを配置..."
+log_info "[Step 11] logrotate 設定ファイルを配置..."
 
 # ソースファイルの存在確認
 if [[ ! -f "${LOGROTATE_CONF_SRC}" ]]; then
@@ -465,9 +482,9 @@ else
 fi
 
 # =============================================================================
-# ステップ 13: ディスク使用量監視スクリプトのセットアップ
+# ステップ 12: ディスク使用量監視スクリプトのセットアップ
 # =============================================================================
-log_info "[Step 13] ディスク使用量監視スクリプトをセットアップ..."
+log_info "[Step 12] ディスク使用量監視スクリプトをセットアップ..."
 
 # ソースファイルの存在確認
 if [[ ! -f "${DISK_CHECK_SCRIPT_SRC}" ]]; then
@@ -525,7 +542,81 @@ if [[ "${DRY_RUN}" == false ]]; then
 fi
 
 # =============================================================================
-# ステップ 14: 最終確認情報の表示
+# ステップ 13: rsyslog 統計設定の配置
+# =============================================================================
+# 注意: rsyslog の再起動（Step 14）より前に配置することで、
+#       1 回の再起動ですべての設定（10- および 11-）が読み込まれる。
+log_info "[Step 13] rsyslog 統計設定ファイルを配置..."
+
+# 既存ファイルのバックアップ
+if [[ -f "${RSYSLOG_STATS_CONF_DEST}" ]]; then
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    STATS_CONF_BACKUP="${BACKUP_DIR}/11-syslog-appliance-stats.conf.${TIMESTAMP}"
+    run_cmd cp "${RSYSLOG_STATS_CONF_DEST}" "${STATS_CONF_BACKUP}"
+    log_ok "既存ファイルをバックアップ: ${STATS_CONF_BACKUP}"
+fi
+
+# 配置・権限設定
+run_cmd cp "${RSYSLOG_STATS_CONF_SRC}" "${RSYSLOG_STATS_CONF_DEST}"
+run_cmd chown root:root "${RSYSLOG_STATS_CONF_DEST}"
+run_cmd chmod 0644 "${RSYSLOG_STATS_CONF_DEST}"
+log_ok "rsyslog 統計設定ファイルを配置: ${RSYSLOG_STATS_CONF_DEST}"
+
+# 統計設定を含めて構文チェック
+log_info "rsyslog 統計設定を含めた構文チェック..."
+if [[ "${DRY_RUN}" == true ]]; then
+    log_warn "[DRY-RUN] rsyslogd -N1 の実行をスキップします。"
+else
+    if ! rsyslogd -N1 2>&1; then
+        log_error "rsyslog の構文チェックに失敗しました。"
+        log_error "設定ファイルを確認してください: ${RSYSLOG_STATS_CONF_DEST}"
+        exit 1
+    fi
+    log_ok "rsyslog 構文チェック（統計設定含む）OK。"
+fi
+
+# =============================================================================
+# ステップ 14: rsyslog 再起動
+# =============================================================================
+# 10-syslog-appliance.conf（Step 6）と 11-syslog-appliance-stats.conf（Step 13）
+# の両方が配置された後で再起動することで、1 回の起動でまとめて読み込む。
+log_info "[Step 14] rsyslog を再起動..."
+run_cmd systemctl restart rsyslog
+if [[ "${DRY_RUN}" == false ]]; then
+    if systemctl is-active --quiet rsyslog; then
+        log_ok "rsyslog が正常に起動しました。"
+    else
+        log_error "rsyslog の起動に失敗しました。"
+        log_error "  journalctl -xeu rsyslog で詳細を確認してください。"
+        exit 1
+    fi
+fi
+
+# =============================================================================
+# ステップ 15: apply-appliance-conf.sh のシステム配置
+# =============================================================================
+# 受信元制限スクリプトをシステムに配置する（T2 対応）。
+# このスクリプトは appliance.conf の allowed_sources 変更を firewalld に
+# 反映する際に使用する。初回セットアップ時は自動実行しない。
+# 実際に受信元を制限したい場合は管理者が手動で実行すること。
+log_info "[Step 15] apply-appliance-conf.sh をシステムに配置..."
+
+if [[ ! -f "${APPLY_CONF_SCRIPT_SRC}" ]]; then
+    log_warn "apply-appliance-conf.sh が見つかりません: ${APPLY_CONF_SCRIPT_SRC}"
+    log_warn "受信元制限機能は利用できません。スキップします。"
+else
+    # DISK_CHECK_SCRIPT_DIR（/opt/syslog-appliance/scripts）は Step 12 で作成済み
+    run_cmd cp "${APPLY_CONF_SCRIPT_SRC}" "${APPLY_CONF_SCRIPT_DEST}"
+    run_cmd chown root:root "${APPLY_CONF_SCRIPT_DEST}"
+    run_cmd chmod 0755 "${APPLY_CONF_SCRIPT_DEST}"
+    log_ok "apply-appliance-conf.sh を配置: ${APPLY_CONF_SCRIPT_DEST}"
+    log_info "受信元制限を設定する場合は以下を実行してください:"
+    log_info "  sudo ${APPLY_CONF_SCRIPT_DEST} --dry-run  # 事前確認"
+    log_info "  sudo ${APPLY_CONF_SCRIPT_DEST}            # 適用"
+fi
+
+# =============================================================================
+# ステップ 16: 最終確認情報の表示
 # =============================================================================
 echo ""
 log_info "=========================================="
@@ -559,4 +650,5 @@ echo ""
 log_info "次のステップ:"
 log_info "  テスト手順: docs/08_mvp0_test.md を参照してください。"
 log_info "  ロールバック: sudo ${SCRIPT_DIR}/rollback-mvp0.sh"
+log_info "  受信元制限: sudo ${APPLY_CONF_SCRIPT_DEST} --help"
 echo ""

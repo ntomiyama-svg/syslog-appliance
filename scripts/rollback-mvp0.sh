@@ -32,11 +32,14 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 RSYSLOG_CONF_DEST="/etc/rsyslog.d/10-syslog-appliance.conf"
+RSYSLOG_STATS_CONF_DEST="/etc/rsyslog.d/11-syslog-appliance-stats.conf"
 LOGROTATE_CONF_DEST="/etc/logrotate.d/syslog-appliance"
 BACKUP_DIR="/var/log/syslog-appliance/.backup"
 
 # ディスク使用量監視スクリプト関連パス
 DISK_CHECK_SCRIPT_DEST="/opt/syslog-appliance/scripts/check-disk-usage.sh"
+# 受信元制限スクリプト関連パス（T2）
+APPLY_CONF_SCRIPT_DEST="/opt/syslog-appliance/scripts/apply-appliance-conf.sh"
 DISK_CHECK_SERVICE_DEST="/etc/systemd/system/syslog-appliance-disk-check.service"
 DISK_CHECK_TIMER_DEST="/etc/systemd/system/syslog-appliance-disk-check.timer"
 DISK_CHECK_TIMER_NAME="syslog-appliance-disk-check.timer"
@@ -208,6 +211,8 @@ log_info "通知ファイル（${NOTIFICATION_DATA_DIR}/）はデータ保全の
 # ステップ 2: rsyslog 設定ファイルの削除（バックアップとして移動）
 # =============================================================================
 log_info "[Step 2] rsyslog 設定ファイルを削除（バックアップとして移動）..."
+
+# メイン設定ファイル（10-）の移動
 if [[ -f "${RSYSLOG_CONF_DEST}" ]]; then
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
     REMOVED_FILE="${BACKUP_DIR}/10-syslog-appliance.conf.removed.${TIMESTAMP}"
@@ -218,6 +223,31 @@ if [[ -f "${RSYSLOG_CONF_DEST}" ]]; then
 else
     log_warn "rsyslog 設定ファイルが見つかりません: ${RSYSLOG_CONF_DEST}"
     log_warn "既にロールバック済みか、手動で削除された可能性があります。"
+fi
+
+# 統計設定ファイル（11-）の移動
+if [[ -f "${RSYSLOG_STATS_CONF_DEST}" ]]; then
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    REMOVED_FILE="${BACKUP_DIR}/11-syslog-appliance-stats.conf.removed.${TIMESTAMP}"
+    run_cmd mkdir -p "${BACKUP_DIR}"
+    run_cmd mv "${RSYSLOG_STATS_CONF_DEST}" "${REMOVED_FILE}"
+    log_ok "統計設定ファイルを移動: ${RSYSLOG_STATS_CONF_DEST} -> ${REMOVED_FILE}"
+else
+    log_info "rsyslog 統計設定ファイルが見つかりません: ${RSYSLOG_STATS_CONF_DEST}（スキップ）"
+fi
+
+# apply-appliance-conf.sh の移動
+# 注意: apply-appliance-conf.sh で設定した firewalld の rich rule は
+#       ここでは削除しない。rich rule は appliance.conf の設定を反映した
+#       運用設定であり、ロールバック後も firewalld の設定として残す。
+#       必要な場合は管理者が手動で削除すること: firewall-cmd --list-rich-rules
+if [[ -f "${APPLY_CONF_SCRIPT_DEST}" ]]; then
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    REMOVED_FILE="${BACKUP_DIR}/apply-appliance-conf.sh.removed.${TIMESTAMP}"
+    run_cmd mv "${APPLY_CONF_SCRIPT_DEST}" "${REMOVED_FILE}"
+    log_ok "apply-appliance-conf.sh を移動: ${APPLY_CONF_SCRIPT_DEST} -> ${REMOVED_FILE}"
+else
+    log_info "ファイルが見つかりません: ${APPLY_CONF_SCRIPT_DEST}（スキップ）"
 fi
 
 # =============================================================================
@@ -362,10 +392,17 @@ log_warn "=========================================="
 log_warn " 注意: 以下のデータは削除していません"
 log_warn "=========================================="
 log_warn "  - /var/log/syslog-appliance/raw/  （受信済みログ）"
+log_warn "  - /var/log/syslog-appliance/stats/  （rsyslog 統計ログ・運用上の証跡として保持）"
 log_warn "  - /var/log/syslog-appliance/.backup/  （バックアップファイル）"
 log_warn "  - /etc/syslog-appliance/  （設定雛形ファイル）"
 log_warn "  - /var/lib/syslog-appliance/notifications/  （通知ファイル）"
 log_warn "  必要に応じて手動で削除してください。"
+log_warn ""
+log_warn "  また、apply-appliance-conf.sh で設定した firewalld の rich rule は"
+log_warn "  削除していません。手動で削除する場合は以下を実行してください:"
+log_warn "    sudo firewall-cmd --list-rich-rules"
+log_warn "    sudo firewall-cmd --permanent --remove-rich-rule='<rule>'"
+log_warn "    sudo firewall-cmd --reload"
 echo ""
 log_ok "=========================================="
 log_ok " MVP 0 ロールバックが完了しました。"
